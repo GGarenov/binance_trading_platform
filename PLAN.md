@@ -240,22 +240,22 @@ Every strategy implements the same interface so backtesting and paper trading sh
 - [x] Manual check: fetch 1 month of 1h BTCUSDT candles end-to-end — 720 candles returned ✓ (verified 2026-07-02)
 
 ### Phase 4 — Strategy engine
-- [ ] `strategies/types.ts`: Strategy interface + zod param schemas
-- [ ] DCA implementation (buy fixed amount per interval over duration)
-- [ ] Grid implementation (levels across range; buy/sell as price crosses levels)
-- [ ] Unit tests for both strategies against small hand-crafted candle fixtures
+- [x] `strategies/types.ts`: Strategy interface + zod param schemas (plus `getState()`/`setState()` snapshots for paper-session resume)
+- [x] DCA implementation (buy fixed amount per interval over duration)
+- [x] Grid implementation (levels across range; buy/sell as price crosses levels)
+- [x] Unit tests for both strategies against small hand-crafted candle fixtures — 16 tests passing (vitest; also covers the simulation engine)
 
 ### Phase 5 — Backtesting
-- [ ] `backtestService.ts`: fetch candles → run strategy → compute P&L, win rate, equity curve → persist run + trades
-- [ ] `POST /api/backtests`, `GET /api/backtests/:id`, `GET /api/backtests/:id/trades`
-- [ ] Config routes: `POST /api/configs`, `GET /api/configs/:id` (zod validation per strategy)
-- [ ] Sanity-check results by hand (e.g. DCA weekly over a known month — numbers must be explainable)
+- [x] `backtestService.ts`: fetch candles → run strategy → compute P&L, win rate, equity curve → persist run + trades (shared executor lives in `services/simulation.ts`; fills at candle close, no fees/slippage — documented MVP simplification)
+- [x] `POST /api/backtests`, `GET /api/backtests/:id`, `GET /api/backtests/:id/trades`
+- [x] Config routes: `POST /api/configs`, `GET /api/configs/:id` (zod validation per strategy)
+- [x] Sanity-check results by hand — DCA weekly $50 over June 2026: 5 buys, engine P&L −24.78105 vs hand-computed −24.78114 (difference = 8-decimal rounding in stored trade quantities) ✓ (verified 2026-07-02)
 
 ### Phase 6 — Paper trading
-- [ ] `paperTradingService.ts`: session lifecycle, in-memory registry of running sessions, live price → strategy decision → simulated fill → DB
-- [ ] Session routes: create / list / get state / stop / trades
-- [ ] Resume `running` sessions from DB on server restart
-- [ ] Unrealized P&L calculation from current price + base balance
+- [x] `paperTradingService.ts`: session lifecycle, in-memory registry of running sessions, live price → strategy decision → simulated fill → DB
+- [x] Session routes: create / list / get state / stop / trades
+- [x] Resume `running` sessions from DB on server restart (verified: killed and restarted the server with a live session — it resumed and kept receiving prices; strategy state persists in the new `strategy_state` JSONB column added by migration)
+- [x] Unrealized P&L calculation from current price + base balance
 
 ### Phase 7 — Frontend
 - [ ] `lib/api.ts` typed fetch wrapper

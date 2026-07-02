@@ -89,6 +89,9 @@ model PaperSession {
   initialBalance Decimal          @map("initial_balance") @db.Decimal(20, 8)
   quoteBalance   Decimal          @map("quote_balance") @db.Decimal(20, 8)
   baseBalance    Decimal          @default(0) @map("base_balance") @db.Decimal(20, 8)
+  /// Strategy's internal state snapshot (e.g. next DCA buy time, held grid
+  /// levels) so a running session can resume after a server restart.
+  strategyState  Json?            @map("strategy_state")
   startedAt      DateTime         @default(now()) @map("started_at") @db.Timestamptz
   stoppedAt      DateTime?        @map("stopped_at") @db.Timestamptz
   config         StrategyConfig   @relation(fields: [configId], references: [id])
