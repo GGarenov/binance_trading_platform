@@ -9,6 +9,9 @@ export const paperSessionsRouter = Router();
 const createSessionSchema = z.object({
   configId: z.number().int().positive(),
   initialBalance: z.number().positive().default(10_000),
+  feeRate: z.number().min(0).max(0.01).default(0.001),
+  // live_real is deliberately not accepted here yet — that's Phase 13.
+  kind: z.enum(["paper", "live_testnet"]).default("paper"),
 });
 
 paperSessionsRouter.post(
@@ -21,7 +24,9 @@ paperSessionsRouter.post(
 
     const session = await paperTradingManager.startSession(
       parsed.data.configId,
-      parsed.data.initialBalance
+      parsed.data.initialBalance,
+      parsed.data.feeRate,
+      parsed.data.kind
     );
     res.status(201).json(session);
   })

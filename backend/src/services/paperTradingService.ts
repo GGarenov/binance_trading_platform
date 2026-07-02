@@ -2,21 +2,41 @@ import { prisma } from "../lib/prisma";
 import { HttpError } from "../lib/errors";
 import { getStrategyDefinition } from "../strategies";
 import type { StrategyInstance } from "../strategies/types";
+import { fetchKlines } from "./binance/rest";
 import { priceStream } from "./binance/stream";
+import {
+  fetchSymbolFilters,
+  fetchTestnetBalances,
+  testnetKeysConfigured,
+} from "./binance/testnet";
+import { executeTestnetFill } from "./orderExecutor";
+import {
+  DEFAULT_FEE_RATE,
+  executeFill,
+  type Balances,
+  type ExecutionOptions,
+} from "./simulation";
+
+export type SessionKind = "paper" | "live_testnet";
 
 interface RunningSession {
   sessionId: number;
+  kind: SessionKind;
   pair: string;
   strategy: StrategyInstance;
   // In-memory mirror of the DB balances; the DB is updated on every trade.
-  quoteBalance: number;
-  baseBalance: number;
+  balances: Balances;
+  execution: ExecutionOptions;
   lastPrice: number | null;
   lastPriceAt: number | null;
   unsubscribe: (() => void) | null;
   /** Guards against overlapping async trade processing between price ticks. */
   processing: boolean;
 }
+
+/** Indicator warm-up for live sessions samples hourly, matching WARMUP_INTERVAL. */
+const WARMUP_INTERVAL = "1h";
+const WARMUP_INTERVAL_MS = 60 * 60_000;
 
 /**
  * Owns all running paper sessions in this process. Each session subscribes to
@@ -27,23 +47,53 @@ interface RunningSession {
 class PaperTradingManager {
   private sessions = new Map<number, RunningSession>();
 
-  async startSession(configId: number, initialBalance: number) {
+  async startSession(
+    configId: number,
+    initialBalance: number,
+    feeRate: number,
+    kind: SessionKind = "paper"
+  ) {
     const config = await prisma.strategyConfig.findUnique({
       where: { id: configId },
       include: { strategy: true },
     });
     if (!config) throw new HttpError(404, `Config ${configId} not found`);
-    if (!getStrategyDefinition(config.strategy.slug)) {
+    const definition = getStrategyDefinition(config.strategy.slug);
+    if (!definition) {
       throw new HttpError(500, `No implementation registered for strategy '${config.strategy.slug}'`);
+    }
+
+    if (kind === "live_testnet") {
+      if (!testnetKeysConfigured()) {
+        throw new HttpError(
+          400,
+          "Binance testnet API keys are not configured. Set BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET in backend/.env and restart the server."
+        );
+      }
+      // Fail fast if the testnet wallet can't back the requested budget:
+      // otherwise every buy order would be rejected one by one later.
+      const params = definition.paramsSchema.parse(config.params);
+      const pair = (params as { pair: string }).pair;
+      const filters = await fetchSymbolFilters(pair); // also validates the pair exists on testnet
+      const wallet = await fetchTestnetBalances();
+      const available = wallet[filters.quoteAsset] ?? 0;
+      if (available < initialBalance) {
+        throw new HttpError(
+          400,
+          `Testnet wallet has ${available.toFixed(2)} ${filters.quoteAsset} free, less than the requested budget of ${initialBalance}`
+        );
+      }
     }
 
     const session = await prisma.paperSession.create({
       data: {
         configId,
         status: "running",
+        kind,
         initialBalance,
         quoteBalance: initialBalance,
         baseBalance: 0,
+        feeRate,
       },
     });
 
@@ -85,13 +135,13 @@ class PaperTradingManager {
   getLiveState(sessionId: number) {
     const s = this.sessions.get(sessionId);
     if (!s || s.lastPrice === null) return null;
-    const equity = s.quoteBalance + s.baseBalance * s.lastPrice;
+    const equity = s.balances.quoteBalance + s.balances.baseBalance * s.lastPrice;
     return {
       currentPrice: s.lastPrice,
       priceUpdatedAt: s.lastPriceAt,
       equity,
-      quoteBalance: s.quoteBalance,
-      baseBalance: s.baseBalance,
+      quoteBalance: s.balances.quoteBalance,
+      baseBalance: s.balances.baseBalance,
     };
   }
 
@@ -109,16 +159,59 @@ class PaperTradingManager {
     // The strategy's clock starts when the session was created, not when the
     // process (re)started — otherwise a restart would reset DCA's schedule.
     const strategy = definition.create(params as never, session.startedAt.getTime());
+
     if (session.strategyState !== null) {
       strategy.setState(session.strategyState);
+    } else {
+      // Fresh indicator strategies (MA, RSI) would otherwise wait ~warmup
+      // hours before their first decision: prime them from recent history.
+      const warmupCandles =
+        typeof definition.warmupCandles === "function"
+          ? definition.warmupCandles(params as never)
+          : definition.warmupCandles ?? 0;
+      if (warmupCandles > 0) {
+        const now = Date.now();
+        const candles = await fetchKlines(
+          pair,
+          WARMUP_INTERVAL,
+          now - warmupCandles * WARMUP_INTERVAL_MS,
+          now
+        );
+        for (const c of candles) {
+          strategy.onPrice(
+            { price: c.close, timestamp: c.closeTime },
+            { quoteBalance: 0, baseBalance: 0 }
+          );
+        }
+        // Persist the primed state so a restart doesn't re-warm (and so the
+        // strategy can't warm up twice on top of live state).
+        await prisma.paperSession.update({
+          where: { id: sessionId },
+          data: { strategyState: JSON.parse(JSON.stringify(strategy.getState())) },
+        });
+      }
+    }
+
+    const kind = session.kind as SessionKind;
+    let balances: Balances = {
+      quoteBalance: Number(session.quoteBalance),
+      baseBalance: Number(session.baseBalance),
+    };
+
+    // A testnet session's coins live in a real (testnet) wallet that we don't
+    // exclusively own — the user may have traded manually, or a previous crash
+    // may have left the DB stale. Never trust the local record blindly.
+    if (kind === "live_testnet") {
+      balances = await this.reconcileWithTestnet(sessionId, pair, balances);
     }
 
     const running: RunningSession = {
       sessionId,
+      kind,
       pair,
       strategy,
-      quoteBalance: Number(session.quoteBalance),
-      baseBalance: Number(session.baseBalance),
+      balances,
+      execution: { feeRate: Number(session.feeRate ?? DEFAULT_FEE_RATE), slippageBps: 0 },
       lastPrice: null,
       lastPriceAt: null,
       unsubscribe: null,
@@ -131,6 +224,44 @@ class PaperTradingManager {
     });
   }
 
+  /**
+   * Clamps the session's recorded balances to what the testnet wallet
+   * actually holds. The session can never spend or sell more than the wallet
+   * has, so if the wallet shrank (manual trades, other sessions), shrink the
+   * session's view too and persist the correction.
+   */
+  private async reconcileWithTestnet(
+    sessionId: number,
+    pair: string,
+    recorded: Balances
+  ): Promise<Balances> {
+    const filters = await fetchSymbolFilters(pair);
+    const wallet = await fetchTestnetBalances();
+    const reconciled: Balances = {
+      quoteBalance: Math.min(recorded.quoteBalance, wallet[filters.quoteAsset] ?? 0),
+      baseBalance: Math.min(recorded.baseBalance, wallet[filters.baseAsset] ?? 0),
+    };
+
+    const drifted =
+      Math.abs(reconciled.quoteBalance - recorded.quoteBalance) > 1e-8 ||
+      Math.abs(reconciled.baseBalance - recorded.baseBalance) > 1e-8;
+    if (drifted) {
+      console.warn(
+        `Testnet session ${sessionId}: reconciled balances against wallet ` +
+          `(quote ${recorded.quoteBalance} -> ${reconciled.quoteBalance}, ` +
+          `base ${recorded.baseBalance} -> ${reconciled.baseBalance})`
+      );
+      await prisma.paperSession.update({
+        where: { id: sessionId },
+        data: {
+          quoteBalance: reconciled.quoteBalance,
+          baseBalance: reconciled.baseBalance,
+        },
+      });
+    }
+    return reconciled;
+  }
+
   private async onPrice(running: RunningSession, price: number, timestamp: number) {
     running.lastPrice = price;
     running.lastPriceAt = timestamp;
@@ -141,48 +272,36 @@ class PaperTradingManager {
     running.processing = true;
 
     try {
-      const decisions = running.strategy.onPrice(
-        { price, timestamp },
-        { quoteBalance: running.quoteBalance, baseBalance: running.baseBalance }
-      );
+      const point = { price, timestamp };
+      const decisions = running.strategy.onPrice(point, { ...running.balances });
 
       for (const decision of decisions) {
-        let side: "buy" | "sell";
-        let quantity: number;
-        let quoteAmount: number;
-
-        if (decision.side === "buy") {
-          if (decision.quoteAmount > running.quoteBalance) continue;
-          side = "buy";
-          quoteAmount = decision.quoteAmount;
-          quantity = quoteAmount / price;
-          running.quoteBalance -= quoteAmount;
-          running.baseBalance += quantity;
-        } else {
-          quantity = Math.min(decision.quantity, running.baseBalance);
-          if (quantity <= 0) continue;
-          side = "sell";
-          quoteAmount = quantity * price;
-          running.baseBalance -= quantity;
-          running.quoteBalance += quoteAmount;
-        }
+        // Paper fills are computed locally; testnet fills come back from a
+        // real exchange order with the actual executed price and commission.
+        const fill =
+          running.kind === "live_testnet"
+            ? await executeTestnetFill(decision, running.pair, point, running.balances)
+            : executeFill(decision, point, running.balances, running.execution);
+        if (!fill) continue;
 
         await prisma.$transaction([
           prisma.simulatedTrade.create({
             data: {
               paperSessionId: running.sessionId,
-              side,
-              price,
-              quantity,
-              quoteAmount,
-              executedAt: new Date(timestamp),
+              side: fill.side,
+              price: fill.price,
+              quantity: fill.quantity,
+              quoteAmount: fill.quoteAmount,
+              fee: fill.fee,
+              intendedPrice: point.price,
+              executedAt: new Date(fill.executedAt),
             },
           }),
           prisma.paperSession.update({
             where: { id: running.sessionId },
             data: {
-              quoteBalance: running.quoteBalance,
-              baseBalance: running.baseBalance,
+              quoteBalance: running.balances.quoteBalance,
+              baseBalance: running.balances.baseBalance,
               strategyState: JSON.parse(JSON.stringify(running.strategy.getState())),
             },
           }),

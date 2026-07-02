@@ -57,6 +57,13 @@ export interface StrategyDefinition<P = unknown> {
   /** Validates user-supplied params before they ever reach the engine or the DB. */
   paramsSchema: z.ZodType<P>;
   /**
+   * Indicator strategies (MA, RSI) need history before their first decision.
+   * When set, the caller feeds this many extra candles from BEFORE the start
+   * to the instance (decisions during warm-up are discarded), so the
+   * indicators are already primed at the real start.
+   */
+  warmupCandles?: number | ((params: P) => number);
+  /**
    * @param startTimeMs when the strategy's clock starts: the first candle of
    * a backtest, or the moment a paper session is created.
    */

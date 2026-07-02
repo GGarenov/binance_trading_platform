@@ -61,8 +61,8 @@ export default function BacktestPage() {
         <p className="mt-2 text-sm text-slate-400">
           Simulated from {shortDate(run.startDate)} to {shortDate(run.endDate)} on{" "}
           {String(run.config?.params?.pair ?? "?")} using {run.interval} candles. Trades
-          execute at candle close with no fees or slippage — real results would differ
-          slightly.
+          execute at candle close and pay a {((run.results?.feeRate ?? 0.001) * 100).toFixed(2)}%
+          fee per fill, like the real exchange.
         </p>
       </div>
 
@@ -91,7 +91,12 @@ export default function BacktestPage() {
             hint:
               results.winRate === null
                 ? "This strategy only accumulates — it never sells, so win rate doesn't apply"
-                : "Share of sells that closed above their buy price",
+                : "Share of sells that beat their buy price after fees",
+          },
+          {
+            label: "Fees paid",
+            value: `$${money(results.feesPaid ?? 0)}`,
+            hint: `${((results.feeRate ?? 0) * 100).toFixed(2)}% per trade, like real Binance`,
           },
         ]}
       />

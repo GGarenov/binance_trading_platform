@@ -273,6 +273,74 @@ Every strategy implements the same interface so backtesting and paper trading sh
 
 > **Post-plan fix during Phase 8:** grid win-rate accounting initially used FIFO matching, which mislabeled profitable grid round trips as losses (a grid sell closes its own level's buy, not the oldest buy). Sell decisions now carry an optional `costBasis` so strategies that know their exact cost report it; FIFO remains the fallback.
 
-## 7. Out of scope (do not build)
+## 7. Post-MVP roadmap (approved 2026-07-02)
 
-Arbitrage, live trading with real funds, strategies beyond DCA/Grid, multi-exchange, user accounts/auth. See spec section 3.
+Sequence is deliberate: **fees first** — every later decision (which strategy, which grid spacing, whether to go live) depends on backtest numbers being honest. Real order execution comes last, and only after a full testnet rehearsal.
+
+### Phase 9 — Realistic simulation: fees & slippage
+- [x] Add a fee model to `runSimulation`: taker fee (default 0.10% per side, Binance spot standard) deducted on every fill; rate configurable per backtest request (`feeRate`, capped at 1% to catch unit mistakes). Fees are charged in quote currency on both sides — economically equivalent to Binance's fee-in-received-asset, but keeps strategies' quantity bookkeeping exact
+- [x] Optional slippage parameter (`slippageBps`, applied against the trade direction; default 0)
+- [x] Same fee/slippage model in paper trading via a shared `executeFill` function (`services/simulation.ts`) used by both executors; per-session `fee_rate` column added by migration
+- [x] Total fees persisted (`feesPaid` in results, `fee` column per trade) and shown in both dashboards
+- [x] Unit tests with hand-computed fee cases (37 tests passing), incl. a test proving a grid with spacing below 2× fee loses on every round trip
+- [x] Grid config form warns when level spacing is below the round-trip fee (hard warning) or within 2.5× of it (soft warning)
+- [x] June 2026 grid comparison re-run WITH 0.1% fees (BTCUSDT 60–70k, $100/level, $1,000 start, Jun 3 – Jul 2):
+
+| Levels | Trades | Fees paid | P&L (with fees) | P&L (old, no fees) | Win rate |
+|---|---|---|---|---|---|
+| 10 | 31 | $3.14 | **+$0.60** | +$3.74 | 100% |
+| 30 | 199 | $19.87 | **−$24.05** | −$4.18 | 98% |
+| 60 | 454 | $45.13 | **−$18.60** | +$26.77 | 96% |
+| 100 | 757 | $75.36 | **−$39.90** | +$43.51 | 94% |
+| 200 | 1235 | $122.78 | **−$148.84** | −$25.26 | 87% |
+
+> With realistic fees, every "profitable" fine-grained grid from the no-fee analysis flips to a loss — fees scale with trade count, so more levels now means strictly more fee drag. The 10-level grid (1.6% spacing ≫ 0.2% round-trip fee) is the only configuration that survives. This is exactly why Phase 9 came before everything else.
+
+### Phase 10 — USDC & multi-asset support
+- [x] `/api/market/symbols` accepts a `quote` query param (USDT | USDC) instead of hardcoding USDT
+- [x] Config form: quote-currency picker; pair autocomplete filtered by the chosen quote; switching quote rewrites the pair suffix (BTCUSDT ↔ BTCUSDC)
+- [x] "(USDT)" labels replaced with the chosen quote currency (template placeholder in field specs)
+- [x] Verified end-to-end: 286 USDC pairs returned, SOLUSDC weekly DCA backtest completed (5 buys, +$2.63, $0.25 fees)
+
+### Phase 11 — New strategies: MA Crossover & RSI Mean Reversion
+- [x] Engine extension — warm-up window: `StrategyDefinition.warmupCandles` (static or params-derived); backtests feed pre-start candles to the instance with decisions discarded; paper sessions prime from recent 1h klines at first boot and persist the primed state
+- [x] **MA Crossover** (`ma-crossover`): buy on short-SMA crossing above long-SMA, sell all on crossing back. Hourly sampling so backtests (1h candles) and paper trading (1s ticks) see the same series
+- [x] **RSI Mean Reversion** (`rsi-reversion`): buy below oversold, sell above overbought; Wilder's RSI over a 5×-period buffer (serializable, deterministic after resume)
+- [x] Indicator helpers (`sma`, `rsiFromCloses`) as pure functions with unit tests against analytic values (all-gains → RSI 100, all-losses → 0, hand-computed seed case)
+- [x] Seed rows with beginner-friendly copy incl. whipsaw / falling-knife warnings (4 strategies in DB)
+- [x] Unit tests: crossover detection, no re-buy while holding, hourly sampling, RSI thresholds, snapshot/resume for both — suite now 37 tests, all passing
+- [x] Config form field specs for both strategies; pages render (200)
+- [x] End-to-end on June 2026 BTCUSDT: MA 16 trades +$0.92 (fees $8.01, win rate 50%); RSI 7 trades **−$67.86** — it bought June's crash dips and the price kept falling: the "falling knife" failure mode from its own description, demonstrated on real data
+
+### Phase 12 — Binance Spot Testnet trading (real orders, fake money)
+- [x] Backend env: `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_API_SECRET` documented in `.env.example`; keys verified against the testnet account (wallet: 10,000 USDT / 10,000 USDC / 1 BTC free). One-off check script: `backend/scripts/checkTestnet.ts`
+- [x] Authenticated testnet client (`services/binance/testnet.ts`, `SPOT_REST_API_TESTNET_URL`) alongside the keyless public client — market data keeps coming from production; only orders/balances hit the testnet
+- [x] Order executor (`services/orderExecutor.ts`): MARKET orders respecting testnet exchange filters — buys use `quoteOrderQty` after a minNotional check; sells round quantity DOWN to LOT_SIZE `stepSize` and skip below `minQty`/`minNotional` (no PRICE_FILTER handling needed: market orders carry no price). Fills recorded with actual average executed price + exchange commission converted to quote
+- [x] New session kind: decided on a `kind` enum column (`paper` | `live_testnet` | `live_real`) on `paper_sessions` rather than a new table — testnet sessions reuse the entire session lifecycle (routes, resume, dashboard, trade log); only the fill executor differs. `live_real` is in the enum but rejected by the API until Phase 13
+- [x] Reconciliation on restart: on boot a testnet session clamps its recorded quote/base balances to what the testnet wallet actually holds (market orders leave no open orders to fetch); drift is logged and persisted. Session start also fails fast if the wallet can't cover the requested budget
+- [x] Dashboard shows intended price (strategy's decision price from the prod stream) vs. filled price (testnet execution) with a per-trade slippage column; `intended_price` column added to `simulated_trades`
+- [x] Verified end-to-end (session #2, Grid BTCUSDT 61,300–61,900 × 13 levels, $100/level): 5 real testnet orders filled — e.g. buy intended $61,598.86 → filled $61,658.98 (+0.10% slippage: the testnet's own order book diverges from prod prices, which is exactly what this phase was built to expose). Testnet charges no commission, so `fee = 0` on real fills
+
+> Phase 12 design note: the prod WebSocket stream still drives strategy decisions (testnet market data is thin), and the testnet is only used for execution. The intended-vs-filled gap therefore includes both real slippage and prod↔testnet book divergence — a feature for learning, but expect fills to track prod prices much more closely in Phase 13.
+
+### Phase 13 — Real-money trading (tiny amounts, behind safety rails)
+**Do not start until Phase 12 has run stable for days.**
+- [ ] Real API key config (spot trading enabled, withdrawals disabled, IP-whitelisted) — key never leaves `backend/.env`
+- [ ] Safety rails, all mandatory: per-session max spend cap, global kill switch (one endpoint/button stops all live sessions), explicit "arm real trading" confirmation step in the UI, audit log table of every order attempt + response
+- [ ] Session kind `live_real` reusing the Phase 12 executor (only the base URL and key differ — that's the point of building testnet first)
+- [ ] Clear UI separation: real-money sessions visually distinct (color, banner) from demo/testnet
+- [ ] Start with the minimum order sizes Binance allows (~$5–10 per trade)
+
+### What I need from the user (per phase)
+
+| Phase | Needed from you |
+|---|---|
+| 9 (fees) | Nothing |
+| 10 (USDC) | Nothing |
+| 11 (MA/RSI) | Nothing |
+| 12 (testnet) | A Binance Spot Testnet account: log in at https://testnet.binance.vision with GitHub, generate an API key + secret, paste them into `backend/.env` yourself (never share them in chat). Free, no real money involved. |
+| 13 (real money) | A real Binance account with: 2FA enabled, an API key with **spot trading only** (withdrawals disabled, IP whitelist set to your machine), a small amount of funds you can afford to lose entirely, and your explicit go-ahead after reviewing the safety rails. Keys go into `backend/.env` yourself. |
+
+## 8. Out of scope (still)
+
+Arbitrage, multi-exchange support, user accounts / demo-wallet levels system (discussed 2026-07-02 — revisit after Phase 13), margin/futures, withdrawal permissions of any kind.

@@ -32,11 +32,14 @@ export interface EquitySample {
 
 export interface BacktestResults {
   initialBalance: number;
+  feeRate: number;
+  slippageBps: number;
   finalQuoteBalance: number;
   finalBaseBalance: number;
   finalEquity: number;
   pnl: number;
   pnlPct: number;
+  feesPaid: number;
   winRate: number | null;
   tradeCount: number;
   equityCurve: EquitySample[];
@@ -63,8 +66,14 @@ export interface SimulatedTrade {
   price: string;
   quantity: string;
   quoteAmount: string;
+  fee: string;
+  /** Price the strategy decided at. On live sessions `price` is the real fill,
+   * so the gap between the two is the observed slippage. Null on backtests. */
+  intendedPrice: string | null;
   executedAt: string;
 }
+
+export type SessionKind = "paper" | "live_testnet" | "live_real";
 
 export interface PaperSessionLive {
   currentPrice: number;
@@ -78,6 +87,7 @@ export interface PaperSession {
   id: number;
   configId: number;
   status: "running" | "stopped";
+  kind: SessionKind;
   initialBalance: string;
   quoteBalance: string;
   baseBalance: string;
@@ -134,10 +144,14 @@ export const api = {
   getBacktest: (id: number) => apiFetch<BacktestRun>(`/api/backtests/${id}`),
   getBacktestTrades: (id: number) => apiFetch<SimulatedTrade[]>(`/api/backtests/${id}/trades`),
 
-  startPaperSession: (configId: number, initialBalance: number) =>
+  startPaperSession: (
+    configId: number,
+    initialBalance: number,
+    kind: "paper" | "live_testnet" = "paper"
+  ) =>
     apiFetch<PaperSession>("/api/paper-sessions", {
       method: "POST",
-      body: JSON.stringify({ configId, initialBalance }),
+      body: JSON.stringify({ configId, initialBalance, kind }),
     }),
   getPaperSessions: () => apiFetch<PaperSession[]>("/api/paper-sessions"),
   getPaperSession: (id: number) => apiFetch<PaperSession>(`/api/paper-sessions/${id}`),
@@ -146,5 +160,6 @@ export const api = {
   getPaperSessionTrades: (id: number) =>
     apiFetch<SimulatedTrade[]>(`/api/paper-sessions/${id}/trades`),
 
-  getSymbols: () => apiFetch<{ count: number; symbols: SymbolInfo[] }>("/api/market/symbols"),
+  getSymbols: (quote: "USDT" | "USDC" = "USDT") =>
+    apiFetch<{ count: number; symbols: SymbolInfo[] }>(`/api/market/symbols?quote=${quote}`),
 };

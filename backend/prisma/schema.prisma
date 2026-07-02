@@ -38,6 +38,17 @@ enum TradeSide {
   @@map("trade_side")
 }
 
+enum SessionKind {
+  /// Simulated fills against live prices (no orders sent anywhere).
+  paper
+  /// Real orders on the Binance Spot Testnet (fake money, real order mechanics).
+  live_testnet
+  /// Real orders with real money — Phase 13, not yet enabled.
+  live_real
+
+  @@map("session_kind")
+}
+
 model Strategy {
   id            Int              @id @default(autoincrement())
   slug          String           @unique
@@ -86,12 +97,15 @@ model PaperSession {
   id             Int              @id @default(autoincrement())
   configId       Int              @map("config_id")
   status         SessionStatus    @default(running)
+  kind           SessionKind      @default(paper)
   initialBalance Decimal          @map("initial_balance") @db.Decimal(20, 8)
   quoteBalance   Decimal          @map("quote_balance") @db.Decimal(20, 8)
   baseBalance    Decimal          @default(0) @map("base_balance") @db.Decimal(20, 8)
   /// Strategy's internal state snapshot (e.g. next DCA buy time, held grid
   /// levels) so a running session can resume after a server restart.
   strategyState  Json?            @map("strategy_state")
+  /// Fee charged per fill (fraction, 0.001 = 0.10%). Fixed at session creation.
+  feeRate        Decimal          @default(0.001) @map("fee_rate") @db.Decimal(6, 5)
   startedAt      DateTime         @default(now()) @map("started_at") @db.Timestamptz
   stoppedAt      DateTime?        @map("stopped_at") @db.Timestamptz
   config         StrategyConfig   @relation(fields: [configId], references: [id])
@@ -111,6 +125,12 @@ model SimulatedTrade {
   price          Decimal       @db.Decimal(20, 8)
   quantity       Decimal       @db.Decimal(20, 8)
   quoteAmount    Decimal       @map("quote_amount") @db.Decimal(20, 8)
+  /// Fee charged for this fill, in quote currency.
+  fee            Decimal       @default(0) @db.Decimal(20, 8)
+  /// The price the strategy decided at. For paper trades this equals `price`;
+  /// for live (testnet/real) orders `price` is the actual average fill price,
+  /// so the difference between the two is the real observed slippage.
+  intendedPrice  Decimal?      @map("intended_price") @db.Decimal(20, 8)
   executedAt     DateTime      @map("executed_at") @db.Timestamptz
   backtestRun    BacktestRun?  @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
   paperSession   PaperSession? @relation(fields: [paperSessionId], references: [id], onDelete: Cascade)

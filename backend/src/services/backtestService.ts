@@ -1,9 +1,9 @@
 import { prisma } from "../lib/prisma";
 import { HttpError } from "../lib/errors";
 import { getStrategyDefinition } from "../strategies";
-import type { PricePoint } from "../strategies/types";
+import type { PricePoint, StrategyInstance } from "../strategies/types";
 import { fetchKlines } from "./binance/rest";
-import { runSimulation } from "./simulation";
+import { DEFAULT_FEE_RATE, runSimulation } from "./simulation";
 
 export interface BacktestRequest {
   configId: number;
@@ -11,6 +11,44 @@ export interface BacktestRequest {
   endDate: Date;
   interval: string;
   initialBalance: number;
+  feeRate: number;
+  slippageBps: number;
+}
+
+const INTERVAL_MS: Record<string, number> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "30m": 30 * 60_000,
+  "1h": 60 * 60_000,
+  "4h": 4 * 60 * 60_000,
+  "1d": 24 * 60 * 60_000,
+};
+
+function toPoints(candles: { close: number; closeTime: number }[]): PricePoint[] {
+  // Trades execute at each candle's close: by close time the price is known,
+  // so the strategy never acts on information from the future.
+  return candles.map((c) => ({ price: c.close, timestamp: c.closeTime }));
+}
+
+/**
+ * Feeds pre-start history to an indicator strategy so its buffers are primed
+ * when the real backtest begins. Decisions during warm-up are discarded — the
+ * account doesn't exist yet.
+ */
+async function warmUp(
+  instance: StrategyInstance,
+  warmupCandles: number,
+  pair: string,
+  interval: string,
+  startMs: number
+) {
+  const intervalMs = INTERVAL_MS[interval] ?? 60 * 60_000;
+  const warmupStart = startMs - warmupCandles * intervalMs;
+  const candles = await fetchKlines(pair, interval, warmupStart, startMs - 1);
+  for (const point of toPoints(candles)) {
+    instance.onPrice(point, { quoteBalance: 0, baseBalance: 0 });
+  }
 }
 
 /**
@@ -32,6 +70,7 @@ export async function runBacktest(request: BacktestRequest) {
   }
 
   const params = definition.paramsSchema.parse(config.params);
+  const pair = (params as { pair: string }).pair;
 
   const run = await prisma.backtestRun.create({
     data: {
@@ -45,7 +84,7 @@ export async function runBacktest(request: BacktestRequest) {
 
   try {
     const candles = await fetchKlines(
-      (params as { pair: string }).pair,
+      pair,
       request.interval,
       request.startDate.getTime(),
       request.endDate.getTime()
@@ -54,15 +93,21 @@ export async function runBacktest(request: BacktestRequest) {
       throw new Error("Binance returned no candles for this range");
     }
 
-    // Trades execute at each candle's close: by close time the price is known,
-    // so the strategy never acts on information from the future.
-    const points: PricePoint[] = candles.map((c) => ({
-      price: c.close,
-      timestamp: c.closeTime,
-    }));
-
+    const points = toPoints(candles);
     const instance = definition.create(params as never, points[0].timestamp);
-    const result = runSimulation(instance, points, request.initialBalance);
+
+    const warmupCandles =
+      typeof definition.warmupCandles === "function"
+        ? definition.warmupCandles(params as never)
+        : definition.warmupCandles ?? 0;
+    if (warmupCandles > 0) {
+      await warmUp(instance, warmupCandles, pair, request.interval, points[0].timestamp);
+    }
+
+    const result = runSimulation(instance, points, request.initialBalance, {
+      feeRate: request.feeRate ?? DEFAULT_FEE_RATE,
+      slippageBps: request.slippageBps ?? 0,
+    });
 
     const { trades, ...summary } = result;
 
@@ -74,6 +119,7 @@ export async function runBacktest(request: BacktestRequest) {
           price: t.price,
           quantity: t.quantity,
           quoteAmount: t.quoteAmount,
+          fee: t.fee,
           executedAt: new Date(t.executedAt),
         })),
       }),

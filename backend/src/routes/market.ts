@@ -35,10 +35,18 @@ marketRouter.get(
   })
 );
 
+const symbolsQuerySchema = z.object({
+  quote: z.enum(["USDT", "USDC"]).default("USDT"),
+});
+
 marketRouter.get(
   "/symbols",
-  asyncHandler(async (_req, res) => {
-    const symbols = await fetchSymbols("USDT");
+  asyncHandler(async (req, res) => {
+    const parsed = symbolsQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      throw new HttpError(400, "quote must be USDT or USDC");
+    }
+    const symbols = await fetchSymbols(parsed.data.quote);
     res.json({ count: symbols.length, symbols });
   })
 );

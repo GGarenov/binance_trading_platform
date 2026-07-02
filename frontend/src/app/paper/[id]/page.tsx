@@ -55,6 +55,7 @@ export default function PaperSessionPage() {
   if (!session) return <p className="text-sm text-slate-500">Loading session…</p>;
 
   const running = session.status === "running";
+  const isTestnet = session.kind === "live_testnet";
   const live = session.live ?? null;
   const initial = Number(session.initialBalance);
 
@@ -73,7 +74,8 @@ export default function PaperSessionPage() {
             ← All strategies
           </Link>
           <h1 className="mt-3 flex items-center gap-3 text-2xl font-bold tracking-tight">
-            Paper session #{session.id} — {session.config?.strategy.name ?? "Strategy"}
+            {isTestnet ? "Testnet session" : "Paper session"} #{session.id} —{" "}
+            {session.config?.strategy.name ?? "Strategy"}
             <span
               className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
                 running
@@ -83,9 +85,17 @@ export default function PaperSessionPage() {
             >
               {running ? "● running" : "stopped"}
             </span>
+            {isTestnet ? (
+              <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-0.5 text-xs font-medium text-sky-400">
+                real orders · fake money
+              </span>
+            ) : null}
           </h1>
           <p className="mt-2 text-sm text-slate-400">
-            Trading {String(session.config?.params?.pair ?? "?")} with simulated funds since{" "}
+            Trading {String(session.config?.params?.pair ?? "?")}{" "}
+            {isTestnet
+              ? "with real orders on the Binance Spot Testnet since"
+              : "with simulated funds since"}{" "}
             {dateTime(session.startedAt)}.
             {running
               ? " Live prices from Binance; this page refreshes every few seconds."
@@ -128,12 +138,25 @@ export default function PaperSessionPage() {
             value: quantity(coins),
             hint: `plus $${money(cash)} in cash`,
           },
+          {
+            label: "Fees paid",
+            value: `$${money(trades.reduce((sum, t) => sum + Number(t.fee ?? 0), 0))}`,
+            hint: isTestnet
+              ? "Actual exchange commission from testnet fills"
+              : "0.10% per trade, like real Binance",
+          },
         ]}
       />
 
       <section>
         <h2 className="mb-3 text-lg font-semibold">Trade log ({trades.length} trades)</h2>
-        <TradeLog trades={trades} />
+        {isTestnet ? (
+          <p className="mb-3 text-sm text-slate-500">
+            &ldquo;Intended&rdquo; is the price the strategy decided at; &ldquo;Filled&rdquo;
+            is what the testnet exchange actually gave us. The gap is real slippage.
+          </p>
+        ) : null}
+        <TradeLog trades={trades} showIntended={isTestnet} />
         {running && trades.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">
             The strategy is watching the market and will trade when its conditions are

@@ -13,6 +13,10 @@ const createBacktestSchema = z.object({
   endDate: z.coerce.date(),
   interval: z.enum(["1m", "5m", "15m", "30m", "1h", "4h", "1d"]).default("1h"),
   initialBalance: z.number().positive().default(10_000),
+  // 0.001 = 0.10% per fill (Binance spot standard). Allow 0 for "ideal world"
+  // comparisons, cap at 1% to catch unit mistakes (e.g. passing 0.1 for 0.1%).
+  feeRate: z.number().min(0).max(0.01).default(0.001),
+  slippageBps: z.number().min(0).max(100).default(0),
 });
 
 backtestsRouter.post(
@@ -26,7 +30,12 @@ backtestsRouter.post(
       throw new HttpError(400, "startDate must be before endDate");
     }
 
-    const run = await runBacktest(parsed.data);
+    const run = await runBacktest({
+      ...parsed.data,
+      // zod defaults guarantee these are set; spelled out for the service type.
+      feeRate: parsed.data.feeRate,
+      slippageBps: parsed.data.slippageBps,
+    });
     res.status(201).json(run);
   })
 );

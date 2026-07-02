@@ -48,7 +48,7 @@ export default function HomePage() {
 
       {sessions.length > 0 ? (
         <section>
-          <h2 className="mb-4 text-xl font-semibold">Your paper trading sessions</h2>
+          <h2 className="mb-4 text-xl font-semibold">Your trading sessions</h2>
           <div className="overflow-hidden rounded-xl border border-slate-800">
             {sessions.map((s) => (
               <Link
@@ -60,6 +60,11 @@ export default function HomePage() {
                   <span className="font-medium">
                     {s.config?.strategy.name ?? "Strategy"} · session #{s.id}
                   </span>
+                  {s.kind === "live_testnet" ? (
+                    <span className="ml-3 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-400">
+                      testnet
+                    </span>
+                  ) : null}
                   <span className="ml-3 text-xs text-slate-500">
                     started {dateTime(s.startedAt)}
                   </span>
