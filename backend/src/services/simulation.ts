@@ -90,17 +90,21 @@ export function runSimulation(
           executedAt: point.timestamp,
         });
 
-        // Win-rate accounting: average cost of the FIFO-matched buys.
+        // Win-rate accounting. Preferred: the strategy states exactly what
+        // this quantity cost to buy (Grid does). Fallback: FIFO-match against
+        // open buys. Either way the FIFO queue is consumed so later fallback
+        // matches stay consistent.
         let remaining = quantity;
-        let cost = 0;
+        let fifoCost = 0;
         while (remaining > 1e-12 && openBuys.length > 0) {
           const lot = openBuys[0];
           const used = Math.min(lot.quantity, remaining);
-          cost += used * lot.price;
+          fifoCost += used * lot.price;
           lot.quantity -= used;
           remaining -= used;
           if (lot.quantity <= 1e-12) openBuys.shift();
         }
+        const cost = decision.costBasis ?? fifoCost;
         sells++;
         if (quoteAmount > cost) winningSells++;
       }

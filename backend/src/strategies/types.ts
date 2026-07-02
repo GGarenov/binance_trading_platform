@@ -23,7 +23,17 @@ export interface PortfolioState {
  */
 export type TradeDecision =
   | { side: "buy"; quoteAmount: number }
-  | { side: "sell"; quantity: number };
+  | {
+      side: "sell";
+      quantity: number;
+      /**
+       * What was originally paid (in quote currency) for the quantity being
+       * sold, when the strategy knows it exactly — Grid does, because each
+       * sell closes one specific level's buy. Used for win-rate accounting;
+       * without it the executor falls back to FIFO matching.
+       */
+      costBasis?: number;
+    };
 
 /**
  * A live strategy with internal state (e.g. "when is my next DCA buy",

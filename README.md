@@ -29,11 +29,53 @@ Most trading bot tools assume you already know what "grid trading" or "DCA" mean
 
 ## Status
 
-🚧 Early planning / setup phase. See `PROJECT_SPEC.md` for full spec.
+✅ MVP complete: strategy library, backtesting, and paper trading all work end-to-end. See `PROJECT_SPEC.md` for the spec and `PLAN.md` for the implementation plan and decisions.
 
 ## Getting started
 
-Setup instructions will be added once the initial project scaffold exists.
+### Prerequisites
+
+- **Node.js ≥ 22.12** (required by the official Binance connector; check with `node --version`)
+- No Binance API key needed — the app only uses public market data
+- No PostgreSQL install needed — a portable PostgreSQL lives in `.pgsql/` (see below)
+
+### 1. Start the database
+
+A portable PostgreSQL 17.5 is set up inside the repo (gitignored). Start it with:
+
+```powershell
+.pgsql\pgsql\bin\pg_ctl.exe -D .pgsql\data -l .pgsql\postgres.log start
+```
+
+(Stop it later with the same command and `stop`.) If you're setting up from a fresh clone, `.pgsql/` won't exist — install PostgreSQL any way you like, create a database, and point `backend/.env` at it instead.
+
+### 2. Start the backend (port 4000)
+
+```powershell
+cd backend
+npm install
+copy .env.example .env      # defaults work with the portable database
+npx prisma migrate dev      # creates the schema
+npx prisma db seed          # inserts the two strategies
+npm run dev
+```
+
+### 3. Start the frontend (port 3000)
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:3000 — pick a strategy, read how it works, run a backtest, start a paper trading session.
+
+### Running tests
+
+```powershell
+cd backend
+npm test
+```
 
 ## Security note
 

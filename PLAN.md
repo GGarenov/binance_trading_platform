@@ -258,18 +258,20 @@ Every strategy implements the same interface so backtesting and paper trading sh
 - [x] Unrealized P&L calculation from current price + base balance
 
 ### Phase 7 — Frontend
-- [ ] `lib/api.ts` typed fetch wrapper
-- [ ] Strategy library page (cards: name, description, risk badge)
-- [ ] Strategy detail page: "how it works" copy + config form (dynamic per strategy, sane defaults)
-- [ ] Backtest dashboard: stats panel, equity chart (recharts), trade log
-- [ ] Paper trading dashboard: live balances, position, P&L, trade log — polling every ~3s
-- [ ] Start/stop paper session controls
+- [x] `lib/api.ts` typed fetch wrapper (+ `lib/format.ts` for money/percent/date display)
+- [x] Strategy library page (cards: name, description, risk badge; also lists existing paper sessions)
+- [x] Strategy detail page: "how it works" copy + config form (dynamic per strategy, sane defaults, pair autocomplete from `/api/market/symbols`)
+- [x] Backtest dashboard: stats panel, equity chart (recharts), trade log
+- [x] Paper trading dashboard: live balances, position, P&L, trade log — polling every ~3s
+- [x] Start/stop paper session controls
 
 ### Phase 8 — Polish & wrap-up
-- [ ] Error states + loading states on all pages
-- [ ] Beginner-friendly copy pass (spec: assume zero trading knowledge)
-- [ ] README "Getting started": prerequisites, DB setup, seed, run both apps
-- [ ] Walk the full Definition of Done (spec section 10) end-to-end
+- [x] Error states + loading states on all pages (incl. friendly "is the backend running?" message)
+- [x] Beginner-friendly copy pass (spec: assume zero trading knowledge)
+- [x] README "Getting started": prerequisites, DB setup, seed, run both apps
+- [x] Walk the full Definition of Done (spec section 10) end-to-end — verified 2026-07-02: both strategies backtested against real June 2026 data (DCA −2.5%, Grid −4.2% with 100% round-trip win rate), paper session ran against live prices and survived a server restart, all 5 pages render, `next build` clean, 16/16 tests pass
+
+> **Post-plan fix during Phase 8:** grid win-rate accounting initially used FIFO matching, which mislabeled profitable grid round trips as losses (a grid sell closes its own level's buy, not the oldest buy). Sell decisions now carry an optional `costBasis` so strategies that know their exact cost report it; FIFO remains the fallback.
 
 ## 7. Out of scope (do not build)
 

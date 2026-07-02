@@ -89,7 +89,9 @@ class GridInstance implements StrategyInstance {
       const quantity = holdings[i];
       const sellTarget = this.levels[i + 1];
       if (quantity !== null && price >= sellTarget) {
-        decisions.push({ side: "sell", quantity });
+        // costBasis: this sell closes exactly one level's buy, which spent
+        // amountPerLevel — telling the executor avoids misleading FIFO matching.
+        decisions.push({ side: "sell", quantity, costBasis: this.params.amountPerLevel });
         holdings[i] = null;
       }
     }
