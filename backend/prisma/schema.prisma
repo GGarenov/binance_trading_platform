@@ -1,0 +1,118 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RiskLevel {
+  low
+  medium
+  high
+
+  @@map("risk_level")
+}
+
+enum RunStatus {
+  pending
+  completed
+  failed
+
+  @@map("run_status")
+}
+
+enum SessionStatus {
+  running
+  stopped
+
+  @@map("session_status")
+}
+
+enum TradeSide {
+  buy
+  sell
+
+  @@map("trade_side")
+}
+
+model Strategy {
+  id            Int              @id @default(autoincrement())
+  slug          String           @unique
+  name          String
+  description   String
+  howItWorks    String           @map("how_it_works")
+  whenItWorks   String           @map("when_it_works")
+  whenItDoesnt  String           @map("when_it_doesnt")
+  riskLevel     RiskLevel        @map("risk_level")
+  defaultParams Json             @map("default_params")
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  configs       StrategyConfig[]
+
+  @@map("strategies")
+}
+
+model StrategyConfig {
+  id         Int            @id @default(autoincrement())
+  strategyId Int            @map("strategy_id")
+  params     Json
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  strategy   Strategy       @relation(fields: [strategyId], references: [id])
+  backtests  BacktestRun[]
+  sessions   PaperSession[]
+
+  @@map("strategy_configs")
+}
+
+model BacktestRun {
+  id        Int              @id @default(autoincrement())
+  configId  Int              @map("config_id")
+  startDate DateTime         @map("start_date") @db.Timestamptz
+  endDate   DateTime         @map("end_date") @db.Timestamptz
+  interval  String
+  status    RunStatus        @default(pending)
+  results   Json?
+  error     String?
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  config    StrategyConfig   @relation(fields: [configId], references: [id])
+  trades    SimulatedTrade[]
+
+  @@map("backtest_runs")
+}
+
+model PaperSession {
+  id             Int              @id @default(autoincrement())
+  configId       Int              @map("config_id")
+  status         SessionStatus    @default(running)
+  initialBalance Decimal          @map("initial_balance") @db.Decimal(20, 8)
+  quoteBalance   Decimal          @map("quote_balance") @db.Decimal(20, 8)
+  baseBalance    Decimal          @default(0) @map("base_balance") @db.Decimal(20, 8)
+  startedAt      DateTime         @default(now()) @map("started_at") @db.Timestamptz
+  stoppedAt      DateTime?        @map("stopped_at") @db.Timestamptz
+  config         StrategyConfig   @relation(fields: [configId], references: [id])
+  trades         SimulatedTrade[]
+
+  @@map("paper_sessions")
+}
+
+/// Belongs to exactly one parent: a backtest run OR a paper session.
+/// Prisma can't express the XOR CHECK constraint; it is added in the
+/// migration SQL (see migration file) and enforced by Postgres.
+model SimulatedTrade {
+  id             Int           @id @default(autoincrement())
+  backtestRunId  Int?          @map("backtest_run_id")
+  paperSessionId Int?          @map("paper_session_id")
+  side           TradeSide
+  price          Decimal       @db.Decimal(20, 8)
+  quantity       Decimal       @db.Decimal(20, 8)
+  quoteAmount    Decimal       @map("quote_amount") @db.Decimal(20, 8)
+  executedAt     DateTime      @map("executed_at") @db.Timestamptz
+  backtestRun    BacktestRun?  @relation(fields: [backtestRunId], references: [id], onDelete: Cascade)
+  paperSession   PaperSession? @relation(fields: [paperSessionId], references: [id], onDelete: Cascade)
+
+  @@index([backtestRunId])
+  @@index([paperSessionId])
+  @@map("simulated_trades")
+}

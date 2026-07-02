@@ -218,23 +218,26 @@ Every strategy implements the same interface so backtesting and paper trading sh
 ## 6. To-do list
 
 ### Phase 1 — Scaffolding
-- [ ] Root `.gitignore` (node_modules, `.env`, `.next`, `dist`)
-- [ ] `backend/`: init npm + TypeScript, Express app skeleton (`index.ts` / `app.ts` split), health-check route
-- [ ] `frontend/`: `create-next-app` with TypeScript + Tailwind + App Router
-- [ ] `backend/.env.example` (`DATABASE_URL`, `PORT`)
-- [ ] Verify Node ≥ 22.12 locally (required by `@binance/spot`)
+- [x] Root `.gitignore` (node_modules, `.env`, `.next`, `dist`)
+- [x] `backend/`: init npm + TypeScript, Express app skeleton (`index.ts` / `app.ts` split), health-check route
+- [x] `frontend/`: `create-next-app` with TypeScript + Tailwind + App Router
+- [x] `backend/.env.example` (`DATABASE_URL`, `PORT`)
+- [x] Verify Node ≥ 22.12 locally (required by `@binance/spot`) — v24.11.1 ✓
 
 ### Phase 2 — Database
-- [ ] Install Prisma, write `schema.prisma` mirroring section 2 above
-- [ ] Local PostgreSQL database + first migration
-- [ ] `seed.ts` with the two strategies (DCA, Grid) incl. plain-language copy and `default_params`
-- [ ] Shared Prisma client in `lib/prisma.ts`
+- [x] Install Prisma, write `schema.prisma` mirroring section 2 above (Prisma 7: URL/seed config moved to `prisma.config.ts`, client requires the `@prisma/adapter-pg` driver adapter)
+- [x] Local PostgreSQL database + first migration (portable PostgreSQL 17.5 in gitignored `.pgsql/` — see note below)
+- [x] `seed.ts` with the two strategies (DCA, Grid) incl. plain-language copy and `default_params`
+- [x] Shared Prisma client in `lib/prisma.ts`
+
+> **Local database note:** no system-wide PostgreSQL was installed, so a portable PostgreSQL 17.5 lives in `.pgsql/` (gitignored). Start it with
+> `.pgsql\pgsql\bin\pg_ctl.exe -D .pgsql\data -l .pgsql\postgres.log start` and stop it with `... stop`. It uses trust auth on localhost:5432 — fine for local dev only. The GET /api/strategies route was pulled forward from Phase 5 to make the seed verifiable end-to-end.
 
 ### Phase 3 — Binance client
-- [ ] `services/binance/rest.ts`: fetch klines (with pagination beyond 1000 candles), fetch exchange symbols
-- [ ] `services/binance/stream.ts`: subscribe/unsubscribe to live price streams per symbol
-- [ ] `GET /api/market/symbols` and `GET /api/market/klines` routes
-- [ ] Manual check: fetch 1 month of 1h BTCUSDT candles end-to-end
+- [x] `services/binance/rest.ts`: fetch klines (with pagination beyond 1000 candles), fetch exchange symbols
+- [x] `services/binance/stream.ts`: subscribe/unsubscribe to live price streams per symbol (implemented + type-checked; live verification comes with Phase 6 paper trading)
+- [x] `GET /api/market/symbols` and `GET /api/market/klines` routes
+- [x] Manual check: fetch 1 month of 1h BTCUSDT candles end-to-end — 720 candles returned ✓ (verified 2026-07-02)
 
 ### Phase 4 — Strategy engine
 - [ ] `strategies/types.ts`: Strategy interface + zod param schemas

@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment files — never commit secrets
+.env
+.env.local
+.env*.local
+
+# Build output
+dist/
+.next/
+out/
+
+# Generated Prisma client (regenerated via `npx prisma generate`)
+backend/src/generated/
+
+# Local portable PostgreSQL (binaries + data + logs)
+.pgsql/
+.pgdata/
+*.log
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
