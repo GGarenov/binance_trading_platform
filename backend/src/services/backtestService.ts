@@ -3,6 +3,7 @@ import { HttpError } from "../lib/errors";
 import { getStrategyDefinition } from "../strategies";
 import type { PricePoint, StrategyInstance } from "../strategies/types";
 import { fetchKlines } from "./binance/rest";
+import { computePerformanceMetrics } from "./backtestAnalytics";
 import { DEFAULT_FEE_RATE, runSimulation } from "./simulation";
 
 export interface BacktestRequest {
@@ -109,7 +110,35 @@ export async function runBacktest(request: BacktestRequest) {
       slippageBps: request.slippageBps ?? 0,
     });
 
+    const firstPrice = candles[0].close;
+    const lastPrice = candles[candles.length - 1].close;
+    const closes = candles.map((c) => c.close);
+    const periodStartMs = request.startDate.getTime();
+    const periodEndMs = request.endDate.getTime();
+
+    const analytics = computePerformanceMetrics({
+      initialBalance: request.initialBalance,
+      finalEquity: result.finalEquity,
+      feeRate: result.feeRate,
+      equityCurve: result.equityCurve,
+      fills: result.trades,
+      interval: request.interval,
+      periodStartMs,
+      periodEndMs,
+      firstPrice,
+      lastPrice,
+      closes,
+    });
+
     const { trades, ...summary } = result;
+    const enrichedSummary = {
+      ...summary,
+      firstPrice,
+      lastPrice,
+      performance: analytics.performance,
+      benchmark: analytics.benchmark,
+      marketRegime: analytics.marketRegime,
+    };
 
     const [, completed] = await prisma.$transaction([
       prisma.simulatedTrade.createMany({
@@ -125,7 +154,7 @@ export async function runBacktest(request: BacktestRequest) {
       }),
       prisma.backtestRun.update({
         where: { id: run.id },
-        data: { status: "completed", results: JSON.parse(JSON.stringify(summary)) },
+        data: { status: "completed", results: JSON.parse(JSON.stringify(enrichedSummary)) },
       }),
     ]);
 

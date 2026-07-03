@@ -144,6 +144,31 @@ export const api = {
   getBacktest: (id: number) => apiFetch<BacktestRun>(`/api/backtests/${id}`),
   getBacktestTrades: (id: number) => apiFetch<SimulatedTrade[]>(`/api/backtests/${id}/trades`),
 
+  /** Downloads the standardized JSON backtest report (attachment). */
+  downloadBacktestReport: async (id: number): Promise<void> => {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}/api/backtests/${id}/export`);
+    } catch {
+      throw new Error(
+        "Cannot reach the backend. Is the API server running on " + API_BASE + "?"
+      );
+    }
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? `Download failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `backtest-${id}-report.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  },
+
   startPaperSession: (
     configId: number,
     initialBalance: number,

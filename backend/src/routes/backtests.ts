@@ -3,6 +3,7 @@ import { z } from "zod";
 import { asyncHandler, HttpError } from "../lib/errors";
 import { prisma } from "../lib/prisma";
 import { runBacktest } from "../services/backtestService";
+import { buildBacktestReport } from "../services/backtestReport";
 
 export const backtestsRouter = Router();
 
@@ -52,6 +53,20 @@ backtestsRouter.get(
     });
     if (!run) throw new HttpError(404, `Backtest ${id} not found`);
     res.json(run);
+  })
+);
+
+backtestsRouter.get(
+  "/:id/export",
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw new HttpError(400, "Invalid backtest id");
+
+    const report = await buildBacktestReport(id);
+    const filename = `backtest-${id}-report.json`;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.json(report);
   })
 );
 

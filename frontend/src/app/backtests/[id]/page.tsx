@@ -14,6 +14,8 @@ export default function BacktestPage() {
   const [run, setRun] = useState<BacktestRun | null>(null);
   const [trades, setTrades] = useState<SimulatedTrade[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     const runId = Number(id);
@@ -49,21 +51,48 @@ export default function BacktestPage() {
 
   const gained = results.pnl >= 0;
 
+  async function handleDownload() {
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await api.downloadBacktestReport(run.id);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div>
         <Link href="/" className="text-sm text-indigo-400">
           ← All strategies
         </Link>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">
-          Backtest #{run.id} — {run.config?.strategy.name ?? "Strategy"}
-        </h1>
-        <p className="mt-2 text-sm text-slate-400">
-          Simulated from {shortDate(run.startDate)} to {shortDate(run.endDate)} on{" "}
-          {String(run.config?.params?.pair ?? "?")} using {run.interval} candles. Trades
-          execute at candle close and pay a {((run.results?.feeRate ?? 0.001) * 100).toFixed(2)}%
-          fee per fill, like the real exchange.
-        </p>
+        <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              Backtest #{run.id} — {run.config?.strategy.name ?? "Strategy"}
+            </h1>
+            <p className="mt-2 text-sm text-slate-400">
+              Simulated from {shortDate(run.startDate)} to {shortDate(run.endDate)} on{" "}
+              {String(run.config?.params?.pair ?? "?")} using {run.interval} candles. Trades
+              execute at candle close and pay a {((run.results?.feeRate ?? 0.001) * 100).toFixed(2)}%
+              fee per fill, like the real exchange.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={downloading}
+            className="shrink-0 rounded-lg border border-indigo-500/50 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-300 transition hover:bg-indigo-500/20 disabled:opacity-50"
+          >
+            {downloading ? "Preparing…" : "Download report (JSON)"}
+          </button>
+        </div>
+        {downloadError ? (
+          <p className="mt-2 text-sm text-red-400">{downloadError}</p>
+        ) : null}
       </div>
 
       <StatsPanel
