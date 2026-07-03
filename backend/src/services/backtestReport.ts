@@ -1,94 +1,27 @@
 import { prisma } from "../lib/prisma";
 import { HttpError } from "../lib/errors";
 import { fetchKlines } from "./binance/rest";
+import { computePerformanceMetrics, fillsToReportFills } from "./backtestAnalytics";
 import {
-  computePerformanceMetrics,
-  fillsToReportFills,
-  type BenchmarkComparison,
-  type MarketRegimeContext,
-  type PerformanceMetrics,
-  type ReportOpenPosition,
-  type ReportRoundTrip,
-} from "./backtestAnalytics";
-import type { EquitySample, SimulatedFill } from "./simulation";
+  dbTradeToFill,
+  MS_PER_DAY,
+  quoteFromPair,
+  REPORT_SCHEMA_VERSION,
+  type StrategyReport,
+} from "./reportShared";
 
-/** Bump when the export shape changes in a breaking way. */
-export const BACKTEST_REPORT_SCHEMA_VERSION = "1.0";
+/** @deprecated Use REPORT_SCHEMA_VERSION */
+export const BACKTEST_REPORT_SCHEMA_VERSION = REPORT_SCHEMA_VERSION;
 
-export interface BacktestReport {
-  schemaVersion: string;
-  generatedAt: string;
-  runMetadata: {
-    backtestId: number;
-    createdAt: string;
-    status: string;
-    strategy: {
-      name: string;
-      slug: string;
-      version: string;
-      riskLevel: string | null;
-    };
-    symbol: string;
-    interval: string;
-    period: {
-      start: string;
-      end: string;
-      durationDays: number;
-    };
-    initialCapital: number;
-    assumptions: {
-      feeRate: number;
-      feeRatePct: number;
-      slippageBps: number;
-      fillModel: string;
-      quoteCurrency: string;
-    };
-  };
-  strategyParameters: Record<string, unknown>;
-  performance: PerformanceMetrics;
-  benchmark: BenchmarkComparison;
-  marketRegime: MarketRegimeContext;
-  tradeLog: {
-    roundTrips: ReportRoundTrip[];
-    openPositions: ReportOpenPosition[];
-    fills: ReturnType<typeof fillsToReportFills>;
-  };
-  equityCurve: EquitySample[];
-  notes: string[];
-}
-
-const MS_PER_DAY = 86_400_000;
-
-function dbTradeToFill(t: {
-  side: string;
-  price: { toString(): string };
-  quantity: { toString(): string };
-  quoteAmount: { toString(): string };
-  fee: { toString(): string };
-  executedAt: Date;
-}): SimulatedFill {
-  return {
-    side: t.side as "buy" | "sell",
-    price: Number(t.price),
-    quantity: Number(t.quantity),
-    quoteAmount: Number(t.quoteAmount),
-    fee: Number(t.fee),
-    executedAt: t.executedAt.getTime(),
-  };
-}
-
-function quoteFromPair(pair: string): string {
-  if (pair.endsWith("USDC")) return "USDC";
-  if (pair.endsWith("USDT")) return "USDT";
-  return "QUOTE";
-}
+/** @deprecated Use StrategyReport */
+export type BacktestReport = StrategyReport;
 
 function parseStoredResults(raw: unknown): {
   initialBalance: number;
   feeRate: number;
   slippageBps: number;
   finalEquity: number;
-  equityCurve: EquitySample[];
+  equityCurve: import("./simulation").EquitySample[];
   firstPrice?: number;
   lastPrice?: number;
 } {
@@ -98,7 +31,7 @@ function parseStoredResults(raw: unknown): {
     feeRate: Number(r.feeRate ?? 0.001),
     slippageBps: Number(r.slippageBps ?? 0),
     finalEquity: Number(r.finalEquity),
-    equityCurve: (r.equityCurve as EquitySample[]) ?? [],
+    equityCurve: (r.equityCurve as import("./simulation").EquitySample[]) ?? [],
     firstPrice: r.firstPrice !== undefined ? Number(r.firstPrice) : undefined,
     lastPrice: r.lastPrice !== undefined ? Number(r.lastPrice) : undefined,
   };
@@ -108,7 +41,7 @@ function parseStoredResults(raw: unknown): {
  * Assembles the standardized backtest export JSON for download / AI analysis.
  * Recomputes analytics from stored trades when extended metrics are missing.
  */
-export async function buildBacktestReport(backtestId: number): Promise<BacktestReport> {
+export async function buildBacktestReport(backtestId: number): Promise<StrategyReport> {
   const run = await prisma.backtestRun.findUnique({
     where: { id: backtestId },
     include: {
@@ -190,9 +123,11 @@ export async function buildBacktestReport(backtestId: number): Promise<BacktestR
   }
 
   return {
-    schemaVersion: BACKTEST_REPORT_SCHEMA_VERSION,
+    schemaVersion: REPORT_SCHEMA_VERSION,
+    reportType: "backtest",
     generatedAt: new Date().toISOString(),
     runMetadata: {
+      reportType: "backtest",
       backtestId: run.id,
       createdAt: run.createdAt.toISOString(),
       status: run.status,

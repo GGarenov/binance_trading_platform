@@ -124,6 +124,30 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function downloadReport(path: string, filename: string): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`);
+  } catch {
+    throw new Error(
+      "Cannot reach the backend. Is the API server running on " + API_BASE + "?"
+    );
+  }
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Download failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   getStrategies: () => apiFetch<Strategy[]>("/api/strategies"),
   getStrategy: (slug: string) => apiFetch<Strategy>(`/api/strategies/${slug}`),
@@ -146,27 +170,11 @@ export const api = {
 
   /** Downloads the standardized JSON backtest report (attachment). */
   downloadBacktestReport: async (id: number): Promise<void> => {
-    let response: Response;
-    try {
-      response = await fetch(`${API_BASE}/api/backtests/${id}/export`);
-    } catch {
-      throw new Error(
-        "Cannot reach the backend. Is the API server running on " + API_BASE + "?"
-      );
-    }
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(body?.error ?? `Download failed (${response.status})`);
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `backtest-${id}-report.json`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    await downloadReport(`/api/backtests/${id}/export`, `backtest-${id}-report.json`);
+  },
+
+  downloadSessionReport: async (id: number): Promise<void> => {
+    await downloadReport(`/api/paper-sessions/${id}/export`, `session-${id}-report.json`);
   },
 
   startPaperSession: (

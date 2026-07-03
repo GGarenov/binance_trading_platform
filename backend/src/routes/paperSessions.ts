@@ -3,6 +3,7 @@ import { z } from "zod";
 import { asyncHandler, HttpError } from "../lib/errors";
 import { prisma } from "../lib/prisma";
 import { paperTradingManager } from "../services/paperTradingService";
+import { buildSessionReport } from "../services/sessionReport";
 
 export const paperSessionsRouter = Router();
 
@@ -71,6 +72,20 @@ paperSessionsRouter.post(
 
     const session = await paperTradingManager.stopSession(id);
     res.json(session);
+  })
+);
+
+paperSessionsRouter.get(
+  "/:id/export",
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) throw new HttpError(400, "Invalid session id");
+
+    const report = await buildSessionReport(id);
+    const filename = `session-${id}-report.json`;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.json(report);
   })
 );
 

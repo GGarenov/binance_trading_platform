@@ -1,6 +1,6 @@
-# Backtest Report Download — Implementation Notes
+# Strategy Report Download — Implementation Notes
 
-This document describes the standardized backtest export feature added to CryptoStrategy Lab: what it includes, how to use it, the JSON schema, and how metrics are computed.
+This document describes the standardized export feature for **backtests** and **live sessions** (paper + testnet) in CryptoStrategy Lab: what it includes, how to use it, the JSON schema, and how metrics are computed.
 
 ---
 
@@ -8,58 +8,84 @@ This document describes the standardized backtest export feature added to Crypto
 
 ### User-facing
 
-- **Download button** on the backtest results page (`/backtests/[id]`) — **“Download report (JSON)”**
-- Clicking it downloads `backtest-{id}-report.json` to the browser
-- Only available for **completed** backtests (disabled/hidden for failed or pending runs)
+| Page | Button | Output file |
+|------|--------|-------------|
+| Backtest results (`/backtests/[id]`) | **Download report (JSON)** | `backtest-{id}-report.json` |
+| Paper / testnet session (`/paper/[id]`) | **Download report (JSON)** | `session-{id}-report.json` |
+
+- Backtest download: only for **completed** backtests
+- Session download: works while **running** or **stopped** (snapshot at export time)
 
 ### Backend
 
 | File | Role |
 |------|------|
 | `backend/src/services/backtestAnalytics.ts` | Pure functions: performance metrics, benchmark, market regime, round-trip trade log |
-| `backend/src/services/backtestReport.ts` | Assembles the full standardized JSON document from DB + Binance klines |
-| `backend/src/routes/backtests.ts` | `GET /api/backtests/:id/export` — returns JSON with `Content-Disposition: attachment` |
+| `backend/src/services/reportShared.ts` | Shared schema types, equity-curve builder for live sessions |
+| `backend/src/services/backtestReport.ts` | Assembles backtest export JSON |
+| `backend/src/services/sessionReport.ts` | Assembles live session export JSON |
+| `backend/src/routes/backtests.ts` | `GET /api/backtests/:id/export` |
+| `backend/src/routes/paperSessions.ts` | `GET /api/paper-sessions/:id/export` |
 | `backend/src/services/backtestService.ts` | New backtests persist extended analytics in `backtest_runs.results` |
 
 ### Frontend
 
 | File | Role |
 |------|------|
-| `frontend/src/lib/api.ts` | `api.downloadBacktestReport(id)` — fetches export and triggers browser download |
-| `frontend/src/app/backtests/[id]/page.tsx` | Download button + loading/error states |
+| `frontend/src/lib/api.ts` | `downloadBacktestReport(id)`, `downloadSessionReport(id)` |
+| `frontend/src/app/backtests/[id]/page.tsx` | Backtest download button |
+| `frontend/src/app/paper/[id]/page.tsx` | Session download button |
 
 ### Tests
 
 | File | Coverage |
 |------|----------|
 | `backend/src/services/backtestAnalytics.test.ts` | Round trips, benchmark, regime, drawdown |
+| `backend/src/services/reportShared.test.ts` | Live-session equity curve from klines |
 
 ---
 
 ## How to use
 
+### Backtest
+
 1. Run a backtest from any strategy config page.
 2. Open the backtest dashboard (`/backtests/{id}`).
 3. Click **Download report (JSON)**.
-4. Open the file in an editor or paste its contents into an AI chat for analysis.
-
-**API (scripts / curl):**
 
 ```bash
 curl -o backtest-42-report.json http://localhost:4000/api/backtests/42/export
 ```
 
+### Live session (paper or testnet)
+
+1. Start a paper or testnet session from the strategy page.
+2. Open the session dashboard (`/paper/{id}`) — while running or after stopping.
+3. Click **Download report (JSON)**.
+
+```bash
+curl -o session-7-report.json http://localhost:4000/api/paper-sessions/7/export
+```
+
+Open either file in an editor or paste into an AI chat for analysis.
+
 ---
 
 ## Standardized JSON schema (`schemaVersion: "1.0"`)
 
-The same top-level shape is used for **all four strategies** (DCA, Grid, MA Crossover, RSI). Strategy-specific params live only under `strategyParameters`. All metrics use the same field names and units so runs are comparable apples-to-apples.
+Both backtests and live sessions use the **same top-level shape**. The `reportType` field distinguishes them:
+
+| `reportType` | `runMetadata` id field | Period end |
+|---|---|---|
+| `"backtest"` | `backtestId` | Fixed backtest `endDate` |
+| `"live_session"` | `sessionId` + `sessionKind` (`paper` \| `live_testnet`) | `stoppedAt` or **now** if still running |
 
 ### Top-level structure
 
 ```json
 {
   "schemaVersion": "1.0",
+  "reportType": "backtest | live_session",
   "generatedAt": "ISO-8601",
   "runMetadata": { ... },
   "strategyParameters": { ... },
@@ -78,8 +104,11 @@ The same top-level shape is used for **all four strategies** (DCA, Grid, MA Cros
 
 | Field | Description |
 |-------|-------------|
-| `backtestId` | Database id |
-| `createdAt` | When the run was created |
+| `reportType` | `backtest` or `live_session` |
+| `backtestId` | Present for backtests |
+| `sessionId` | Present for live sessions |
+| `sessionKind` | `paper` or `live_testnet` (live sessions only) |
+| `createdAt` | When the run/session was created |
 | `status` | `completed` (export only allowed when completed) |
 | `strategy.name` | Display name, e.g. "Grid Trading" |
 | `strategy.slug` | Stable key, e.g. `grid`, `dca`, `ma-crossover`, `rsi-reversion` |
@@ -93,7 +122,7 @@ The same top-level shape is used for **all four strategies** (DCA, Grid, MA Cros
 | `assumptions.feeRate` | Decimal per fill, e.g. `0.001` = 0.10% |
 | `assumptions.feeRatePct` | Same as percent, e.g. `0.1` |
 | `assumptions.slippageBps` | Slippage in basis points |
-| `assumptions.fillModel` | Always `"candle_close"` |
+| `assumptions.fillModel` | `candle_close` (backtest), `live_simulated` (paper), or `testnet_market` (testnet) |
 | `assumptions.quoteCurrency` | `USDT` or `USDC` inferred from pair suffix |
 
 ---
@@ -275,15 +304,27 @@ One market buy at `firstPrice` with entry fee; hold to `lastPrice`; no exit fee 
 ## Files changed (summary)
 
 ```
-backend/src/services/backtestAnalytics.ts      (new)
-backend/src/services/backtestAnalytics.test.ts   (new)
-backend/src/services/backtestReport.ts           (new)
-backend/src/services/backtestService.ts          (extended results)
-backend/src/routes/backtests.ts                  (GET /:id/export)
-frontend/src/lib/api.ts                          (downloadBacktestReport)
-frontend/src/app/backtests/[id]/page.tsx         (download button)
-download_report.md                               (this file)
+backend/src/services/backtestAnalytics.ts      (metrics)
+backend/src/services/reportShared.ts           (shared schema + equity builder)
+backend/src/services/backtestReport.ts         (backtest export)
+backend/src/services/sessionReport.ts          (live session export)
+backend/src/services/reportShared.test.ts
+backend/src/routes/backtests.ts                (GET /:id/export)
+backend/src/routes/paperSessions.ts            (GET /:id/export)
+frontend/src/lib/api.ts
+frontend/src/app/backtests/[id]/page.tsx
+frontend/src/app/paper/[id]/page.tsx
+download_report.md
 ```
+
+---
+
+## Live session specifics
+
+- **Equity curve** is rebuilt from session fills + **1h candles** from session start to export time (not tick-by-tick).
+- **Benchmark / regime** use the same 1h price series over the session window.
+- **Running sessions**: `period.end` is the export timestamp; `notes` includes a running-session disclaimer.
+- **Testnet**: fills use real exchange prices; `fillModel` is `testnet_market`.
 
 ---
 
@@ -294,7 +335,7 @@ download_report.md                               (this file)
 - Include raw OHLCV candles in the report
 - Stop-loss / take-profit with real `exitReason` values
 - Compare multiple backtests in one export bundle
-- Paper/testnet session reports (same schema, different `runMetadata` source)
+- Paper/testnet session reports (same schema, different `runMetadata` source) — **done**
 
 ---
 

@@ -18,6 +18,8 @@ export default function PaperSessionPage() {
   const [trades, setTrades] = useState<SimulatedTrade[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     api.getPaperSession(sessionId).then(setSession).catch((err) => setError(err.message));
@@ -31,6 +33,18 @@ export default function PaperSessionPage() {
     const timer = setInterval(refresh, POLL_MS);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await api.downloadSessionReport(sessionId);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const handleStop = async () => {
     if (!confirm("Stop this paper trading session? It cannot be resumed.")) return;
@@ -104,16 +118,29 @@ export default function PaperSessionPage() {
                 : ""}
           </p>
         </div>
-        {running ? (
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={handleStop}
-            disabled={stopping}
-            className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+            type="button"
+            onClick={handleDownload}
+            disabled={downloading}
+            className="rounded-lg border border-indigo-500/50 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-300 transition hover:bg-indigo-500/20 disabled:opacity-50"
           >
-            {stopping ? "Stopping…" : "Stop session"}
+            {downloading ? "Preparing…" : "Download report (JSON)"}
           </button>
-        ) : null}
+          {running ? (
+            <button
+              onClick={handleStop}
+              disabled={stopping}
+              className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+            >
+              {stopping ? "Stopping…" : "Stop session"}
+            </button>
+          ) : null}
+        </div>
       </div>
+      {downloadError ? (
+        <p className="text-sm text-red-400">{downloadError}</p>
+      ) : null}
 
       <StatsPanel
         stats={[
